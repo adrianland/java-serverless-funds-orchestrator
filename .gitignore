@@ -31,3 +31,41 @@ build/
 
 ### VS Code ###
 .vscode/
+
+### Environment ###
+.env.local
+.env.*.local
+
+### Git ###
+.git
+.gitignore
+
+### Docker ###
+docker-compose.override.yml
+Dockerfile
+.dockerignore
+
+
+# ── Build output ─────────────────────────────────────────────────────────────
+*.jar
+*.war
+*.class
+
+# ── IDE ──────────────────────────────────────────────────────────────────────
+.idea/
+*.swp
+
+# ── Environment / secrets ─────────────────────────────────────────────────────
+.env.production
+*.pem
+*.key
+
+# ── OS ───────────────────────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+
+# ── Docker volumes ────────────────────────────────────────────────────────────
+dynamodb-data/
+
+# ── Maven wrapper ─────────────────────────────────────────────────────────────
+!.mvn/wrapper/maven-wrapper.jar
