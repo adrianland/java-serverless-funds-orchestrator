@@ -1,0 +1,27 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# Profile: local  (used when running from IntelliJ / CLI without Docker)
+#
+# Prerequisites:
+#   1. DynamoDB Local must be running on port 8000.
+#      Quickest way — run only the DB service from docker-compose:
+#
+#        docker compose up dynamodb-local
+#
+#   2. Set the active profile in IntelliJ:
+#      Run → Edit Configurations → Environment variables:
+#        SPRING_PROFILES_ACTIVE=local
+#
+# ─────────────────────────────────────────────────────────────────────────────
+
+aws:
+  dynamodb:
+    endpoint:   http://localhost:8000
+    region:     us-east-1
+    access-key: local
+    secret-key: local
+    table-name: FondosBTG
+
+logging:
+  level:
+    com.adrianland.fundsorchestrator: DEBUG
+    software.amazon.awssdk:           WARN

@@ -1,0 +1,73 @@
+version: "3.9"
+
+# ┌──────────────────────────────────────────────────────────────────────────┐
+# │  BTG Pactual – Investment Fund Orchestrator                              │
+# │  docker-compose up --build                                               │
+# │                                                                          │
+# │  Services:                                                               │
+# │    • dynamodb-local  → http://localhost:8000                             │
+# │    • app             → http://localhost:8080                             │
+# │    • swagger-ui      → http://localhost:8080/swagger-ui.html             │
+# └──────────────────────────────────────────────────────────────────────────┘
+
+services:
+
+  # ── DynamoDB Local ──────────────────────────────────────────────────────────
+  dynamodb-local:
+    image: amazon/dynamodb-local:2.4.0
+    container_name: btg-dynamodb-local
+    # Run as root so the process can write the .db file to the bind-mount dir.
+    # -sharedDb      → single shared database file (shared across all clients)
+    # -dbPath /home/dynamodblocal/data → directory owned by the container user
+    user: root
+    command: ["-jar", "DynamoDBLocal.jar", "-sharedDb", "-dbPath", "/home/dynamodblocal/data"]
+    ports:
+      - "8000:8000"
+    volumes:
+      - dynamodb-data:/home/dynamodblocal/data
+    networks:
+      - btg-network
+    healthcheck:
+      # amazon/dynamodb-local has no curl/wget — use bash built-in TCP check
+      test: ["CMD-SHELL", "exec 3<>/dev/tcp/localhost/8000 && echo OK >&3 && exec 3>&- || exit 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+
+  # ── Spring Boot Application ─────────────────────────────────────────────────
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: runtime
+    container_name: btg-funds-orchestrator
+    env_file:
+      - .env
+    environment:
+      DYNAMODB_ENDPOINT: http://dynamodb-local:8000
+      SPRING_PROFILES_ACTIVE: docker
+    ports:
+      - "${APP_PORT:-8080}:8080"
+    depends_on:
+      dynamodb-local:
+        condition: service_healthy
+    networks:
+      - btg-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8080/actuator/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+# ── Named volumes (data persists across container restarts) ──────────────────
+volumes:
+  dynamodb-data:
+    driver: local
+
+# ── Isolated bridge network ──────────────────────────────────────────────────
+networks:
+  btg-network:
+    driver: bridge

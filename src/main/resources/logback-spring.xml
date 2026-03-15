@@ -1,0 +1,33 @@
+<configuration>
+
+  <appender name="JSON_CONSOLE" class="ch.qos.logback.core.ConsoleAppender">
+    <encoder class="net.logstash.logback.encoder.LogstashEncoder">
+      <includeCallerData>false</includeCallerData>
+      <fieldNames>
+        <timestamp>timestamp</timestamp>
+        <message>message</message>
+        <logger>logger</logger>
+        <thread>thread</thread>
+        <level>level</level>
+      </fieldNames>
+      <customFields>{"service":"java-serverless-funds-orchestrator","environment":"${SPRING_PROFILES_ACTIVE:-local}"}</customFields>
+      <throwableConverter class="net.logstash.logback.stacktrace.ShortenedThrowableConverter">
+        <maxDepthPerCause>10</maxDepthPerCause>
+        <rootCauseFirst>true</rootCauseFirst>
+      </throwableConverter>
+    </encoder>
+  </appender>
+
+  <!-- Silence noisy AWS SDK internals -->
+  <logger name="software.amazon.awssdk" level="WARN"/>
+  <logger name="org.apache.http"        level="WARN"/>
+  <logger name="io.netty"               level="WARN"/>
+
+  <!-- Application packages at INFO -->
+  <logger name="com.adrianland.fundsorchestrator" level="INFO"/>
+
+  <root level="INFO">
+    <appender-ref ref="JSON_CONSOLE"/>
+  </root>
+
+</configuration>
