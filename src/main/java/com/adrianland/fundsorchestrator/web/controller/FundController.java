@@ -45,8 +45,7 @@ public class FundController {
     @GetMapping("/funds")
     @Operation(summary = "List all available funds",
             description = "Returns the full catalog of BTG Pactual investment funds.")
-    public ResponseEntity<List<FundResponse>> listFunds(
-            @PathVariable String clientId) {
+    public ResponseEntity<List<FundResponse>> listFunds( @PathVariable String clientId) {
 
         return ResponseEntity.ok(
                 listFundsUseCase.execute().stream().map(FundResponse::from).toList());

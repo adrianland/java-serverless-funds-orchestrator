@@ -1,7 +1,6 @@
 package com.adrianland.fundsorchestrator.infrastructure.notification.observer;
 
 import com.adrianland.fundsorchestrator.domain.event.FundTransactionEvent;
-import com.adrianland.fundsorchestrator.domain.model.enums.TransactionType;
 import com.adrianland.fundsorchestrator.infrastructure.notification.factory.NotificationStrategyFactory;
 import com.adrianland.fundsorchestrator.infrastructure.notification.strategy.NotificationStrategy;
 import lombok.RequiredArgsConstructor;

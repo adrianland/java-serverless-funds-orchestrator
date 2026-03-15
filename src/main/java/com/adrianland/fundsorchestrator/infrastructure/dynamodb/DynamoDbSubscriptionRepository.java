@@ -26,7 +26,6 @@ public class DynamoDbSubscriptionRepository implements SubscriptionRepository {
 
     private final DynamoDbClient dynamoDbClient;
     private final DynamoDbTransactionRepository txHelper;
-    private final DynamoDbClientRepository clientHelper;
 
     @Override
     public Optional<Subscription> findByClientAndFund(String clientId, String fundId) {
