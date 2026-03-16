@@ -1,11 +1,13 @@
 AWSTemplateFormatVersion: "2010-09-09"
 Description: >
-  BTG Pactual – Investment Fund Orchestrator
-  Provisions: VPC · Subnets · Security Group · DynamoDB · App Runner · IAM (Least Privilege)
+  BTG Pactual - Investment Fund Orchestrator.
+  Free Tier: VPC, Subnets, Security Group, DynamoDB, EC2 t3.micro, IAM (Least Privilege)
+  Compute: EC2 t3.micro (750 hours/month FREE on new accounts) running Docker + Spring Boot.
+  Database: DynamoDB PAY_PER_REQUEST (25GB + 200M requests FREE).
 
-# ╔══════════════════════════════════════════════════════════════════════════╗
-# ║  PARAMETERS                                                              ║
-# ╚══════════════════════════════════════════════════════════════════════════╝
+# ==============================================================================
+# PARAMETERS
+# ==============================================================================
 Parameters:
 
   Environment:
@@ -28,7 +30,7 @@ Parameters:
     Type: String
     Description: >
       ECR image URI for the application.
-      Example: 123456789.dkr.ecr.us-east-1.amazonaws.com/btg-funds:latest
+      Example: 123456789.dkr.ecr.us-east-1.amazonaws.com/btg-funds-orchestrator:latest
 
   VpcCidr:
     Type: String
@@ -38,17 +40,21 @@ Parameters:
     Type: String
     Default: "10.0.1.0/24"
 
-  PublicSubnet2Cidr:
+  AmiId:
     Type: String
-    Default: "10.0.2.0/24"
+    Description: >
+      Amazon Linux 2023 AMI ID (free tier eligible). Get it with:
+      aws ec2 describe-images --owners amazon
+      --filters "Name=name,Values=al2023-ami-*-x86_64" "Name=state,Values=available"
+      --query "sort_by(Images, &CreationDate)[-1].ImageId" --output text --region us-east-1
 
 
-# ╔══════════════════════════════════════════════════════════════════════════╗
-# ║  RESOURCES                                                               ║
-# ╚══════════════════════════════════════════════════════════════════════════╝
+# ==============================================================================
+# RESOURCES
+# ==============================================================================
 Resources:
 
-  # ─── VPC ──────────────────────────────────────────────────────────────────
+  # --- VPC -------------------------------------------------------------------
   BtgVpc:
     Type: AWS::EC2::VPC
     Properties:
@@ -83,17 +89,6 @@ Resources:
         - Key: Name
           Value: !Sub "btg-public-subnet-1-${Environment}"
 
-  PublicSubnet2:
-    Type: AWS::EC2::Subnet
-    Properties:
-      VpcId: !Ref BtgVpc
-      CidrBlock: !Ref PublicSubnet2Cidr
-      AvailabilityZone: !Select [1, !GetAZs ""]
-      MapPublicIpOnLaunch: true
-      Tags:
-        - Key: Name
-          Value: !Sub "btg-public-subnet-2-${Environment}"
-
   PublicRouteTable:
     Type: AWS::EC2::RouteTable
     Properties:
@@ -107,42 +102,41 @@ Resources:
       DestinationCidrBlock: "0.0.0.0/0"
       GatewayId: !Ref InternetGateway
 
-  Subnet1RouteTableAssociation:
+  SubnetRouteTableAssociation:
     Type: AWS::EC2::SubnetRouteTableAssociation
     Properties:
       SubnetId: !Ref PublicSubnet1
       RouteTableId: !Ref PublicRouteTable
 
-  Subnet2RouteTableAssociation:
-    Type: AWS::EC2::SubnetRouteTableAssociation
-    Properties:
-      SubnetId: !Ref PublicSubnet2
-      RouteTableId: !Ref PublicRouteTable
-
-  # ─── Security Group (only app port inbound) ───────────────────────────────
+  # --- Security Group --------------------------------------------------------
   AppSecurityGroup:
     Type: AWS::EC2::SecurityGroup
     Properties:
-      GroupDescription: Allow inbound traffic on application port only
+      GroupDescription: BTG Funds - allow app port and SSH
       VpcId: !Ref BtgVpc
       SecurityGroupIngress:
         - IpProtocol: tcp
           FromPort: !Ref AppPort
           ToPort: !Ref AppPort
           CidrIp: "0.0.0.0/0"
-          Description: Application HTTP port
+          Description: Spring Boot application port
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: "0.0.0.0/0"
+          Description: SSH access for troubleshooting
       SecurityGroupEgress:
         - IpProtocol: "-1"
           CidrIp: "0.0.0.0/0"
-          Description: Allow all outbound (DynamoDB API calls)
+          Description: Allow all outbound (ECR pull + DynamoDB calls)
       Tags:
         - Key: Name
           Value: !Sub "btg-funds-sg-${Environment}"
 
-  # ─── DynamoDB Table (Single Table Design) ────────────────────────────────
+  # --- DynamoDB Table (Single Table Design) ----------------------------------
   FondosBTGTable:
     Type: AWS::DynamoDB::Table
-    DeletionPolicy: Retain   # Protect data on stack deletion
+    DeletionPolicy: Retain
     Properties:
       TableName: !Ref DynamoDbTableName
       BillingMode: PAY_PER_REQUEST
@@ -159,24 +153,24 @@ Resources:
       PointInTimeRecoverySpecification:
         PointInTimeRecoveryEnabled: true
       SSESpecification:
-        SSEEnabled: true   # Encryption at rest
+        SSEEnabled: true
       Tags:
         - Key: Project
           Value: btg-funds-orchestrator
         - Key: Environment
           Value: !Ref Environment
 
-  # ─── IAM Role – Least Privilege ──────────────────────────────────────────
-  AppRunnerInstanceRole:
+  # --- IAM Role for EC2 - Least Privilege ------------------------------------
+  Ec2InstanceRole:
     Type: AWS::IAM::Role
     Properties:
-      RoleName: !Sub "btg-funds-apprunner-role-${Environment}"
+      RoleName: !Sub "btg-funds-ec2-role-${Environment}"
       AssumeRolePolicyDocument:
         Version: "2012-10-17"
         Statement:
           - Effect: Allow
             Principal:
-              Service: tasks.apprunner.amazonaws.com
+              Service: ec2.amazonaws.com
             Action: sts:AssumeRole
       Policies:
         - PolicyName: DynamoDbLeastPrivilege
@@ -196,97 +190,128 @@ Resources:
                   - dynamodb:DescribeTable
                 Resource:
                   - !GetAtt FondosBTGTable.Arn
-                  # No other resources — strict least-privilege
-
-  # IAM Role for App Runner to pull the ECR image
-  AppRunnerAccessRole:
-    Type: AWS::IAM::Role
-    Properties:
-      RoleName: !Sub "btg-funds-apprunner-access-role-${Environment}"
-      AssumeRolePolicyDocument:
-        Version: "2012-10-17"
-        Statement:
-          - Effect: Allow
-            Principal:
-              Service: build.apprunner.amazonaws.com
-            Action: sts:AssumeRole
+        - PolicyName: EcrReadAccess
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Sid: EcrPullImage
+                Effect: Allow
+                Action:
+                  - ecr:GetAuthorizationToken
+                  - ecr:BatchGetImage
+                  - ecr:GetDownloadUrlForLayer
+                  - ecr:BatchCheckLayerAvailability
+                Resource: "*"
+      # AmazonSSMManagedInstanceCore enables Session Manager (browser SSH)
+      # so you can connect to the instance without a key pair
       ManagedPolicyArns:
-        - arn:aws:iam::aws:policy/service-role/AWSAppRunnerServicePolicyForECRAccess
+        - arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
 
-  # ─── AWS App Runner Service ──────────────────────────────────────────────
-  FundsAppRunnerService:
-    Type: AWS::AppRunner::Service
+  Ec2InstanceProfile:
+    Type: AWS::IAM::InstanceProfile
     Properties:
-      ServiceName: !Sub "btg-funds-orchestrator-${Environment}"
-      SourceConfiguration:
-        AuthenticationConfiguration:
-          AccessRoleArn: !GetAtt AppRunnerAccessRole.Arn
-        ImageRepository:
-          ImageIdentifier: !Ref ImageUri
-          ImageRepositoryType: ECR
-          ImageConfiguration:
-            Port: !Sub "${AppPort}"
-            RuntimeEnvironmentVariables:
-              - Name: SPRING_PROFILES_ACTIVE
-                Value: !Ref Environment
-              - Name: AWS_REGION
-                Value: !Ref "AWS::Region"
-              - Name: DYNAMODB_TABLE_NAME
-                Value: !Ref DynamoDbTableName
-              - Name: DYNAMODB_ENDPOINT
-                Value: ""    # Empty → hits real AWS DynamoDB endpoint
-      InstanceConfiguration:
-        Cpu: "1 vCPU"
-        Memory: "2 GB"
-        InstanceRoleArn: !GetAtt AppRunnerInstanceRole.Arn
-      HealthCheckConfiguration:
-        Protocol: HTTP
-        Path: /actuator/health
-        Interval: 10
-        Timeout: 5
-        HealthyThreshold: 1
-        UnhealthyThreshold: 3
-      AutoScalingConfigurationArn: !Ref AutoScalingConfig
+      InstanceProfileName: !Sub "btg-funds-ec2-profile-${Environment}"
+      Roles:
+        - !Ref Ec2InstanceRole
+
+  # --- EC2 t2.micro (FREE TIER) ----------------------------------------------
+  BtgFundsEc2Instance:
+    Type: AWS::EC2::Instance
+    DependsOn: FondosBTGTable
+    Properties:
+      InstanceType: t3.micro
+      ImageId: !Ref AmiId
+      IamInstanceProfile: !Ref Ec2InstanceProfile
+      SubnetId: !Ref PublicSubnet1
+      SecurityGroupIds:
+        - !Ref AppSecurityGroup
       Tags:
+        - Key: Name
+          Value: !Sub "btg-funds-server-${Environment}"
         - Key: Project
           Value: btg-funds-orchestrator
-        - Key: Environment
-          Value: !Ref Environment
+      UserData:
+        Fn::Base64:
+          !Sub
+          - |
+            #!/bin/bash
+            set -e
+            
+            # Capture resolved values into shell variables first
+            APP_PORT="${AppPort}"
+            IMAGE_URI="${ImageUri}"
+            AWS_REGION_VAL="${AWS::Region}"
+            TABLE_NAME="${DynamoDbTableName}"
+            ENV_NAME="${Environment}"
+            ECR_HOST=$(echo "$IMAGE_URI" | cut -d'/' -f1)
+            
+            # Log all values for troubleshooting
+            echo "=== BTG Startup ===" >> /var/log/btg-startup.log
+            echo "IMAGE_URI=$IMAGE_URI" >> /var/log/btg-startup.log
+            echo "AWS_REGION=$AWS_REGION_VAL" >> /var/log/btg-startup.log
+            echo "TABLE_NAME=$TABLE_NAME" >> /var/log/btg-startup.log
+            echo "ECR_HOST=$ECR_HOST" >> /var/log/btg-startup.log
+            
+            # Install and start Docker
+            yum update -y
+            yum install -y docker
+            systemctl enable docker
+            systemctl start docker
+            
+            # Authenticate with ECR
+            aws ecr get-login-password --region "$AWS_REGION_VAL" | \
+              docker login --username AWS --password-stdin "$ECR_HOST"
+            
+            # Pull image
+            docker pull "$IMAGE_URI"
+            
+            # Run container with explicit environment variables
+            docker run -d \
+              --name btg-funds-app \
+              --restart unless-stopped \
+              -p "$APP_PORT":8080 \
+              -e SPRING_PROFILES_ACTIVE="$ENV_NAME" \
+              -e AWS_REGION="$AWS_REGION_VAL" \
+              -e AWS_DEFAULT_REGION="$AWS_REGION_VAL" \
+              -e DYNAMODB_TABLE_NAME="$TABLE_NAME" \
+              -e DYNAMODB_ENDPOINT="" \
+              "$IMAGE_URI"
+            
+            echo "Container started successfully" >> /var/log/btg-startup.log
+          - {}
 
-  AutoScalingConfig:
-    Type: AWS::AppRunner::AutoScalingConfiguration
-    Properties:
-      AutoScalingConfigurationName: !Sub "btg-funds-autoscaling-${Environment}"
-      MinSize: 1
-      MaxSize: 5
-      MaxConcurrency: 100
 
-
-# ╔══════════════════════════════════════════════════════════════════════════╗
-# ║  OUTPUTS                                                                 ║
-# ╚══════════════════════════════════════════════════════════════════════════╝
+# ==============================================================================
+# OUTPUTS
+# ==============================================================================
 Outputs:
 
-  AppRunnerServiceUrl:
-    Description: HTTPS URL of the App Runner service (SSL managed automatically)
-    Value: !Sub "https://${FundsAppRunnerService.ServiceUrl}"
+  AppUrl:
+    Description: Application URL
+    Value: !Sub "http://${BtgFundsEc2Instance.PublicIp}:${AppPort}"
     Export:
-      Name: !Sub "BtgFundsServiceUrl-${Environment}"
+      Name: !Sub "BtgFundsUrl-${Environment}"
 
   SwaggerUiUrl:
-    Description: Swagger UI
-    Value: !Sub "https://${FundsAppRunnerService.ServiceUrl}/swagger-ui.html"
+    Description: Swagger UI URL
+    Value: !Sub "http://${BtgFundsEc2Instance.PublicIp}:${AppPort}/swagger-ui.html"
+
+  HealthCheckUrl:
+    Description: Health check endpoint
+    Value: !Sub "http://${BtgFundsEc2Instance.PublicIp}:${AppPort}/actuator/health"
+
+  AppPublicIp:
+    Description: Public IP of the EC2 instance
+    Value: !GetAtt BtgFundsEc2Instance.PublicIp
 
   DynamoDbTableName:
     Description: DynamoDB table name
     Value: !Ref FondosBTGTable
-    Export:
-      Name: !Sub "BtgFondosBTGTable-${Environment}"
 
   DynamoDbTableArn:
     Description: DynamoDB table ARN
     Value: !GetAtt FondosBTGTable.Arn
 
-  VpcId:
-    Description: VPC ID
-    Value: !Ref BtgVpc
+  InstanceId:
+    Description: EC2 Instance ID
+    Value: !Ref BtgFundsEc2Instance
