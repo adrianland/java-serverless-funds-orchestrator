@@ -31,7 +31,7 @@ import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.*;
 
 @ExtendWith(MockitoExtension.class)
-@DisplayName("SubscribeFundService – Unit Tests")
+@DisplayName("SubscribeFundService  Unit Tests")
 class SubscribeFundServiceTest {
 
     @Mock private ClientRepository clientRepository;
@@ -88,7 +88,7 @@ class SubscribeFundServiceTest {
                 .build();
     }
 
-    // ─────────────────────────────────────────────────────────────────────────
+    //
     @Nested
     @DisplayName("Happy Path")
     class HappyPath {
@@ -128,6 +128,93 @@ class SubscribeFundServiceTest {
         }
     }
 
+    //
+    @Nested
+    @DisplayName("Business Rule Violations")
+    class BusinessRuleViolations {
 
+        @Test
+        @DisplayName("Should throw InsufficientBalanceException when balance is too low")
+        void shouldThrowWhenInsufficientBalance() {
 
+            when(clientRepository.findById("CLIENT-002")).thenReturn(Optional.of(clientWith50k));
+            when(fundRepository.findById("1")).thenReturn(Optional.of(fundWith75k));
+            when(subscriptionRepository.findByClientAndFund("CLIENT-002", "1"))
+                    .thenReturn(Optional.empty());
+
+            assertThatThrownBy(() -> service.execute("CLIENT-002", "1", null))
+                    .isInstanceOf(InsufficientBalanceException.class)
+                    .hasMessageContaining("FPV_BTG_PACTUAL_RECAUDADORA");
+
+            verify(subscriptionRepository, never()).createSubscriptionAtomically(any(), any(), any(), any());
+        }
+
+        @Test
+        @DisplayName("Should throw AlreadySubscribedException when already subscribed")
+        void shouldThrowWhenAlreadySubscribed() {
+            var existingSub = com.adrianland.fundsorchestrator.domain.model.Subscription.builder()
+                    .clientId("CLIENT-001").fundId("1").fundName("FPV_BTG_PACTUAL_RECAUDADORA")
+                    .amount(new BigDecimal("75000")).subscribedAt(Instant.now()).build();
+
+            when(clientRepository.findById("CLIENT-001")).thenReturn(Optional.of(clientWith500k));
+            when(fundRepository.findById("1")).thenReturn(Optional.of(fundWith75k));
+            when(subscriptionRepository.findByClientAndFund("CLIENT-001", "1"))
+                    .thenReturn(Optional.of(existingSub));
+
+            assertThatThrownBy(() -> service.execute("CLIENT-001", "1", null))
+                    .isInstanceOf(AlreadySubscribedException.class);
+        }
+
+        @Test
+        @DisplayName("Should throw ClientNotFoundException when client does not exist")
+        void shouldThrowWhenClientNotFound() {
+            when(clientRepository.findById("UNKNOWN")).thenReturn(Optional.empty());
+
+            assertThatThrownBy(() -> service.execute("UNKNOWN", "1", null))
+                    .isInstanceOf(ClientNotFoundException.class);
+        }
+
+        @Test
+        @DisplayName("Should throw FundNotFoundException when fund does not exist")
+        void shouldThrowWhenFundNotFound() {
+            when(clientRepository.findById("CLIENT-001")).thenReturn(Optional.of(clientWith500k));
+            when(fundRepository.findById("99")).thenReturn(Optional.empty());
+
+            assertThatThrownBy(() -> service.execute("CLIENT-001", "99", null))
+                    .isInstanceOf(FundNotFoundException.class);
+        }
+    }
+
+    //
+    @Nested
+    @DisplayName("Balance Edge Cases  BTG Pactual Rules")
+    class BalanceEdgeCases {
+
+        @Test
+        @DisplayName("Client with exactly minimum balance should subscribe successfully")
+        void shouldSubscribeWithExactMinimumBalance() {
+            Client exactBalance = clientWith500k.withBalance(new BigDecimal("75000"));
+
+            when(clientRepository.findById("CLIENT-001")).thenReturn(Optional.of(exactBalance));
+            when(fundRepository.findById("1")).thenReturn(Optional.of(fundWith75k));
+            when(subscriptionRepository.findByClientAndFund(any(), any())).thenReturn(Optional.empty());
+            when(transactionFactory.createApertura(any(), any(), any(), any(), any()))
+                    .thenReturn(fakeTx);
+
+            assertThatNoException().isThrownBy(() -> service.execute("CLIENT-001", "1", null));
+        }
+
+        @Test
+        @DisplayName("Client with one COP below minimum should be rejected")
+        void shouldRejectWhenOneCopBelowMinimum() {
+            Client almostEnough = clientWith500k.withBalance(new BigDecimal("74999"));
+
+            when(clientRepository.findById("CLIENT-001")).thenReturn(Optional.of(almostEnough));
+            when(fundRepository.findById("1")).thenReturn(Optional.of(fundWith75k));
+            when(subscriptionRepository.findByClientAndFund(any(), any())).thenReturn(Optional.empty());
+
+            assertThatThrownBy(() -> service.execute("CLIENT-001", "1", null))
+                    .isInstanceOf(InsufficientBalanceException.class);
+        }
+    }
 }
